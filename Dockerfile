@@ -1,9 +1,9 @@
 # Usamos una imagen ligera de Python (Linux)
 FROM python:3.11-slim
 
-# 1. Instalar FFmpeg y Git en el sistema Linux de la nube
+# 1. Instalar FFmpeg, Git Y NODEJS (Crucial para yt-dlp)
 RUN apt-get update && \
-    apt-get install -y ffmpeg git && \
+    apt-get install -y ffmpeg git nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # 2. Configurar directorio de trabajo
