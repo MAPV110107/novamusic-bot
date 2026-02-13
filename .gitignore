@@ -1,0 +1,14 @@
+# Archivos de entorno (SECRETOS)
+.env
+
+# Carpetas de librerías (Pesadas, no se suben)
+venv/
+__pycache__/
+
+# Archivos multimedia (No queremos subir MP3s)
+*.mp3
+*.jpg
+*.webp
+
+# Logs del sistema
+*.log
