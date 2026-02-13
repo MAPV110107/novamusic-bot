@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, URLInputFile
+from aiogram.types import FSInputFile
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.exceptions import TelegramRetryAfter
 
@@ -19,16 +19,18 @@ from aiohttp import web
 
 # --- CONFIGURACIÓN ---
 load_dotenv()
+
 TOKEN = os.getenv("BOT_TOKEN")
 SPOTIPY_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SPOTIPY_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
 
-# Instancia principal de Cobalt (puedes cambiarla si se cae)
+# Instancia de Cobalt v10 (Pública y estable)
+# Si esta falla, puedes probar: "https://cobalt.kwiatekmiki.pl/api/json"
 COBALT_API_URL = "https://api.cobalt.tools/api/json"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Inicialización
+# --- INICIALIZACIÓN ---
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIPY_ID, client_secret=SPOTIPY_SECRET))
@@ -48,7 +50,8 @@ class ProgressTracker:
             )
         except: pass
 
-# --- CORE ---
+# --- CORE LOGIC ---
+
 def obtener_info_spotify(url):
     try:
         results = sp.track(url)
@@ -64,7 +67,7 @@ def obtener_info_spotify(url):
 
 def buscar_video_id(query, duration_target):
     try:
-        # Buscamos en YT Music (API Segura)
+        # Búsqueda en API YT Music (No se bloquea)
         results = ytmusic.search(query, filter="songs")
         if not results: results = ytmusic.search(query, filter="videos")
         
@@ -77,7 +80,6 @@ def buscar_video_id(query, duration_target):
             video_id = item.get('videoId')
             if not video_id: continue
             
-            # Parsear duración
             duration_text = item.get('duration', '0:00')
             try:
                 parts = list(map(int, duration_text.split(':')))
@@ -98,6 +100,7 @@ def buscar_video_id(query, duration_target):
 
 async def descargar_con_cobalt(info, tracker):
     tracker.filename = f"{info['artist']} - {info['title']}"
+    # Limpiamos nombre de archivo
     nombre_limpio = "".join([c for c in tracker.filename if c.isalnum() or c in (' ', '-', '_', '.')]).strip() + ".mp3"
     
     # 1. Obtener ID de YouTube
@@ -105,38 +108,45 @@ async def descargar_con_cobalt(info, tracker):
     video_id = await asyncio.to_thread(buscar_video_id, info['query'], info['duration'])
     
     if not video_id:
-        return None, "No se encontró el video."
+        return None, "No se encontró el video en YT Music."
     
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     
-    # 2. Solicitar enlace a Cobalt
-    await tracker.update("☁️ Solicitando audio a Cobalt")
+    # 2. Solicitar enlace a Cobalt (Protocolo v10)
+    await tracker.update("☁️ Procesando en Cobalt v10")
     
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "User-Agent": "NovaBot/1.0"
+        "User-Agent": "NovaBot/2.0"
     }
     
+    # NUEVO PAYLOAD (Formato v10)
     payload = {
         "url": video_url,
-        "aFormat": "mp3",
-        "isAudioOnly": True,
+        "downloadMode": "audio",    # Reemplaza a isAudioOnly
+        "audioFormat": "mp3",       # Reemplaza a aFormat
+        "audioBitrate": "320"
     }
 
     async with aiohttp.ClientSession() as session:
         try:
-            # Paso A: Obtener URL de descarga
+            # POST request a Cobalt
             async with session.post(COBALT_API_URL, json=payload, headers=headers) as resp:
                 data = await resp.json()
                 
-                if 'url' not in data:
-                    logging.error(f"Cobalt Error: {data}")
-                    return None, "Cobalt no pudo procesar el link."
-                
-                download_url = data['url']
+                # Manejo de respuesta v10
+                if 'url' in data:
+                    download_url = data['url']
+                elif 'status' in data and data['status'] == 'stream':
+                    download_url = data['url']
+                elif 'status' in data and data['status'] == 'redirect':
+                    download_url = data['url']
+                else:
+                    logging.error(f"Cobalt Response Error: {data}")
+                    return None, f"Cobalt rechazó el link ({data.get('text', 'Unknown')})"
 
-            # Paso B: Descargar el archivo al servidor de Render
+            # Descargar el archivo MP3
             await tracker.update("⬇️ Descargando al servidor")
             async with session.get(download_url) as resp_file:
                 if resp_file.status == 200:
@@ -147,16 +157,16 @@ async def descargar_con_cobalt(info, tracker):
                             f.write(chunk)
                     return nombre_limpio, None
                 else:
-                    return None, f"Error descargando archivo: {resp_file.status}"
+                    return None, f"Error descargando archivo final: {resp_file.status}"
 
         except Exception as e:
-            logging.error(f"Error Fatal Cobalt: {e}")
-            return None, str(e)
+            logging.error(f"Excepción Cobalt: {e}")
+            return None, "Error de conexión con Cobalt."
 
 # --- HANDLERS ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("👋 <b>NovaBot: Cobalt Engine</b>\nSistema de descarga tercerizado (Anti-Ban).", parse_mode=ParseMode.HTML)
+    await message.answer("👋 <b>NovaBot: Cobalt v10</b>\nSistema actualizado al nuevo protocolo.", parse_mode=ParseMode.HTML)
 
 @dp.message(F.text.contains("spotify.com"))
 async def handle_spotify(message: types.Message):
@@ -170,7 +180,6 @@ async def handle_spotify(message: types.Message):
 
     tracker = ProgressTracker(status_msg)
     
-    # Flujo Cobalt
     archivo, error = await descargar_con_cobalt(info, tracker)
 
     if archivo and os.path.exists(archivo):
@@ -179,7 +188,8 @@ async def handle_spotify(message: types.Message):
         try:
             audio_file = FSInputFile(archivo)
             thumb_path = archivo.replace(".mp3", ".jpg")
-            # Intentamos bajar la portada de Spotify
+            
+            # Descargar portada
             if info['cover']:
                 async with aiohttp.ClientSession() as sess:
                     async with sess.get(info['cover']) as r:
@@ -199,7 +209,7 @@ async def handle_spotify(message: types.Message):
     else:
         await status_msg.edit_text(f"❌ Error: {error}")
 
-# --- SERVER ---
+# --- WEB SERVER ---
 async def health_check(request): return web.Response(text="Bot Alive")
 async def start_web_server():
     app = web.Application()
@@ -211,7 +221,7 @@ async def start_web_server():
     await site.start()
 
 async def main():
-    print("🚀 Bot NovaMusic (Cobalt Edition) Iniciado...")
+    print("🚀 Bot NovaMusic (Cobalt v10) Iniciado...")
     await start_web_server()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
