@@ -18,6 +18,15 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from aiohttp import web
 
+import subprocess
+
+# --- VERIFICACIÓN DE ENTORNO (DIAGNÓSTICO) ---
+try:
+    node_version = subprocess.check_output(["node", "-v"]).decode("utf-8").strip()
+    print(f"✅ DIAGNÓSTICO: Node.js detectado exitosamente: {node_version}")
+except Exception as e:
+    print(f"❌ DIAGNÓSTICO: ALERTA CRÍTICA - Node.js NO encontrado: {e}")
+
 # --- 1. CONFIGURACIÓN ---
 load_dotenv()
 
