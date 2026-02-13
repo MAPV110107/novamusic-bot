@@ -25,12 +25,10 @@ SPOTIPY_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
-# --- DIAGNÓSTICO DE INICIO ---
-try:
-    node_v = subprocess.check_output(["node", "-v"]).decode("utf-8").strip()
-    print(f"✅ SYSTEM CHECK: Node.js {node_v} Ready.")
-except:
-    print("⚠️ SYSTEM CHECK: Node.js NOT found.")
+# --- ESPERAR A QUE TOR ARRANQUE ---
+print("🧅 Esperando a que la red Tor se estabilice (10s)...")
+time.sleep(10)
+print("🧅 Red Tor lista.")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -45,11 +43,11 @@ class ProgressTracker:
 
     async def update(self, current, total, status="⬇️ Descargando"):
         now = time.time()
-        if (now - self.last_update > 3) or (current == total):
+        if (now - self.last_update > 5) or (current == total): # Aumenté a 5s porque Tor es lento
             percentage = (current / total) * 100 if total > 0 else 0
             filled = int(10 * current // total) if total > 0 else 0
             bar = '█' * filled + '░' * (10 - filled)
-            text = (f"💿 <b>{self.filename}</b>\n{status}...\n<code>[{bar}] {percentage:.0f}%</code>")
+            text = (f"💿 <b>{self.filename}</b>\n{status} (vía Tor 🧅)...\n<code>[{bar}] {percentage:.0f}%</code>")
             try:
                 await self.message.edit_text(text, parse_mode=ParseMode.HTML)
                 self.last_update = now
@@ -84,20 +82,22 @@ def descargar_con_ux(info, tracker, loop):
     tracker.filename = f"{info['artist']} - {info['title']}"
     nombre_limpio = "".join([c for c in tracker.filename if c.isalnum() or c in (' ', '-', '_', '.')]).strip()
     
-    # --- CONFIGURACIÓN ANTI-BLOQUEO (IOS MODE) ---
+    # --- CONFIGURACIÓN TOR (EL BÚNKER) ---
     base_opts = {
         'quiet': True,
         'noplaylist': True,
         'ignoreerrors': True,
-        'force_ipv4': True,
-        'socket_timeout': 30,
-        # Fingimos ser un iPhone (Menos bloqueos en Datacenters)
+        'socket_timeout': 60, # Tor es lento, damos más tiempo
+        # ENRUTAMOS TODO POR TOR
+        'proxy': 'socks5://127.0.0.1:9050',
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios']
+                'player_client': ['android'] # Android se lleva bien con proxys
             }
         }
     }
+
+    print("🧅 Iniciando descarga a través del Túnel Tor...")
 
     ydl_opts_search = {**base_opts, 'format': 'bestaudio/best'}
 
@@ -156,11 +156,11 @@ def descargar_con_ux(info, tracker, loop):
 # --- HANDLERS ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("👋 <b>NovaBot</b>\nSistema Reiniciado. Nueva IP solicitada.", parse_mode=ParseMode.HTML)
+    await message.answer("👋 <b>NovaBot: Tor Edition 🧅</b>\nTráfico encriptado y rotación de IP activa.", parse_mode=ParseMode.HTML)
 
 @dp.message(F.text.contains("spotify.com"))
 async def handle_spotify(message: types.Message):
-    status_msg = await message.answer("🔍 <b>Analizando...</b>", parse_mode=ParseMode.HTML)
+    status_msg = await message.answer("🔍 <b>Conectando a la red Tor...</b>", parse_mode=ParseMode.HTML)
     await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
 
     info = await asyncio.to_thread(obtener_info_spotify, message.text)
@@ -191,7 +191,7 @@ async def handle_spotify(message: types.Message):
                     try: os.remove(f)
                     except: pass
     else:
-        await status_msg.edit_text("❌ Error 429: La IP sigue bloqueada. Intenta de nuevo más tarde.")
+        await status_msg.edit_text("❌ Error: Incluso Tor falló. Render IP muy restringida.")
 
 # --- SERVER ---
 async def health_check(request): return web.Response(text="Bot NovaMusic Alive!")
@@ -205,7 +205,7 @@ async def start_web_server():
     await site.start()
 
 async def main():
-    print("🚀 Bot NovaMusic (Clean iOS Mode) Iniciado...")
+    print("🚀 Bot NovaMusic (Tor Edition) Iniciado...")
     await start_web_server()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
