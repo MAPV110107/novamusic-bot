@@ -26,7 +26,7 @@ SPOTIPY_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
 
 # --- INSTANCIA DE COBALT (BACKUP EUROPA) ---
 # Esta instancia suele ser más permisiva con bots
-COBALT_API_URL = "https://cobalt.kwiatekmiki.pl/api/json"
+COBALT_API_URL = "https://api.cobalt.tools/api/json"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
