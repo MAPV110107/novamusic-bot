@@ -1,5 +1,6 @@
 # Archivos de entorno (SECRETOS)
 .env
+.cache
 
 # Carpetas de librerías (Pesadas, no se suben)
 venv/
