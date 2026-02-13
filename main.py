@@ -21,23 +21,16 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 SPOTIPY_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SPOTIPY_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-COOKIES_CONTENT = os.getenv("COOKIES_CONTENT")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
-# --- GESTIÓN DE COOKIES ---
-COOKIE_FILE_PATH = "cookies.txt"
-def setup_cookies():
-    if COOKIES_CONTENT:
-        try:
-            with open(COOKIE_FILE_PATH, "w") as f:
-                f.write(COOKIES_CONTENT)
-            logging.info(f"🍪 Cookies restauradas ({os.path.getsize(COOKIE_FILE_PATH)} bytes).")
-        except Exception as e:
-            logging.error(f"⚠️ Error cookies: {e}")
-
-setup_cookies() # Ejecutar al inicio
+# --- DIAGNÓSTICO DE INICIO ---
+try:
+    node_v = subprocess.check_output(["node", "-v"]).decode("utf-8").strip()
+    print(f"✅ SYSTEM CHECK: Node.js {node_v} Ready.")
+except:
+    print("⚠️ SYSTEM CHECK: Node.js NOT found.")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -91,27 +84,20 @@ def descargar_con_ux(info, tracker, loop):
     tracker.filename = f"{info['artist']} - {info['title']}"
     nombre_limpio = "".join([c for c in tracker.filename if c.isalnum() or c in (' ', '-', '_', '.')]).strip()
     
-    # --- MODO TV (Anti-Ban) ---
+    # --- CONFIGURACIÓN ANTI-BLOQUEO (IOS MODE) ---
     base_opts = {
         'quiet': True,
         'noplaylist': True,
         'ignoreerrors': True,
         'force_ipv4': True,
         'socket_timeout': 30,
-        # TRUCO: Cliente TV suele saltarse los captchas y el Geo-Lock
+        # Fingimos ser un iPhone (Menos bloqueos en Datacenters)
         'extractor_args': {
             'youtube': {
-                'player_client': ['tv'] 
+                'player_client': ['ios']
             }
         }
     }
-
-    # INYECTAR COOKIES (Obligatorio para pasar el Error 429)
-    if os.path.exists(COOKIE_FILE_PATH) and os.path.getsize(COOKIE_FILE_PATH) > 0:
-        base_opts['cookiefile'] = COOKIE_FILE_PATH
-        print("🍪 Cookies activas + Modo TV.")
-    else:
-        print("⚠️ ALERTA: Sin cookies. Probable fallo 429.")
 
     ydl_opts_search = {**base_opts, 'format': 'bestaudio/best'}
 
@@ -132,16 +118,13 @@ def descargar_con_ux(info, tracker, loop):
             if diff <= 5: score += 100
             elif diff <= 20: score += 60
             else: score -= 50
-            
             upl = vid.get('uploader', '').lower().replace(" ","")
             art = info['artist'].lower().replace(" ","")
             if art in upl or "topic" in upl: score += 40
-            
             vid_title = vid.get('title', '').lower()
             orig_title = info['title'].lower()
             for p in prohibidas:
                 if p in vid_title and p not in orig_title: score -= 150
-            
             if score > best_score:
                 best_score = score
                 best_cand = vid
@@ -173,7 +156,7 @@ def descargar_con_ux(info, tracker, loop):
 # --- HANDLERS ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("👋 <b>NovaBot: TV Mode</b>\nCookies Cargadas. Intentando burlar el bloqueo.", parse_mode=ParseMode.HTML)
+    await message.answer("👋 <b>NovaBot</b>\nSistema Reiniciado. Nueva IP solicitada.", parse_mode=ParseMode.HTML)
 
 @dp.message(F.text.contains("spotify.com"))
 async def handle_spotify(message: types.Message):
@@ -208,7 +191,7 @@ async def handle_spotify(message: types.Message):
                     try: os.remove(f)
                     except: pass
     else:
-        await status_msg.edit_text("❌ Error: YouTube bloqueó la IP de Render (429/Sign-in).")
+        await status_msg.edit_text("❌ Error 429: La IP sigue bloqueada. Intenta de nuevo más tarde.")
 
 # --- SERVER ---
 async def health_check(request): return web.Response(text="Bot NovaMusic Alive!")
@@ -222,7 +205,7 @@ async def start_web_server():
     await site.start()
 
 async def main():
-    print("🚀 Bot NovaMusic (TV Mode) Iniciado...")
+    print("🚀 Bot NovaMusic (Clean iOS Mode) Iniciado...")
     await start_web_server()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
