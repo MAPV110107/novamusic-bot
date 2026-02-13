@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 import time
-import re
+import subprocess
 from dotenv import load_dotenv
 
 # Librerías de Telegram
@@ -18,48 +18,23 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from aiohttp import web
 
-import subprocess
-
-# --- VERIFICACIÓN DE ENTORNO (DIAGNÓSTICO) ---
-try:
-    node_version = subprocess.check_output(["node", "-v"]).decode("utf-8").strip()
-    print(f"✅ DIAGNÓSTICO: Node.js detectado exitosamente: {node_version}")
-except Exception as e:
-    print(f"❌ DIAGNÓSTICO: ALERTA CRÍTICA - Node.js NO encontrado: {e}")
-
 # --- 1. CONFIGURACIÓN ---
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 SPOTIPY_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SPOTIPY_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-COOKIES_CONTENT = os.getenv("COOKIES_CONTENT")
 
 # Configuración de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
-# --- 2. GESTIÓN DE COOKIES (CRÍTICO) ---
-COOKIE_FILE_PATH = "cookies.txt"
-
-def setup_cookies():
-    """Escribe las cookies de la variable de entorno al disco"""
-    if COOKIES_CONTENT:
-        try:
-            with open(COOKIE_FILE_PATH, "w") as f:
-                f.write(COOKIES_CONTENT)
-            size = os.path.getsize(COOKIE_FILE_PATH)
-            if size > 100:
-                logging.info(f"🍪 Cookies cargadas exitosamente. Tamaño: {size} bytes.")
-            else:
-                logging.warning(f"⚠️ Archivo de cookies creado pero parece muy pequeño ({size} bytes). Revisa la variable.")
-        except Exception as e:
-            logging.error(f"⚠️ Error escribiendo cookies: {e}")
-    else:
-        logging.warning("⚠️ VARIABLE 'COOKIES_CONTENT' VACÍA O NO EXISTE. YouTube bloqueará la descarga.")
-
-# Ejecutar setup al inicio
-setup_cookies()
+# --- VERIFICACIÓN DE ENTORNO ---
+try:
+    node_version = subprocess.check_output(["node", "-v"]).decode("utf-8").strip()
+    logging.info(f"✅ DIAGNÓSTICO: Node.js detectado: {node_version}")
+except Exception as e:
+    logging.warning(f"❌ DIAGNÓSTICO: Node.js no encontrado ({e})")
 
 # Inicialización de Bots
 bot = Bot(token=TOKEN)
@@ -69,7 +44,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
     client_id=SPOTIPY_ID, client_secret=SPOTIPY_SECRET
 ))
 
-# --- 3. UTILIDADES UX ---
+# --- 2. UTILIDADES UX ---
 
 class ProgressTracker:
     def __init__(self, message: types.Message):
@@ -97,7 +72,7 @@ class ProgressTracker:
             except Exception:
                 pass 
 
-# --- 4. LÓGICA DE NEGOCIO (CORE) ---
+# --- 3. LÓGICA DE NEGOCIO (CORE) ---
 
 def obtener_info_spotify(url):
     try:
@@ -129,24 +104,27 @@ def progress_hook_wrapper(d, tracker_coro, loop):
 
 def descargar_con_ux(info, tracker, loop):
     tracker.filename = f"{info['artist']} - {info['title']}"
-    # Nombre seguro para Linux/Docker
     nombre_limpio = "".join([c for c in tracker.filename if c.isalnum() or c in (' ', '-', '_', '.')]).strip()
     
-    # CONFIGURACIÓN ROBUSTA DE YT-DLP
+    # --- ESTRATEGIA IOS (IPHONE MODE) ---
+    # Esto suele evitar el Error 429 en Datacenters
     base_opts = {
         'quiet': True,
         'noplaylist': True,
         'ignoreerrors': True,
-        'force_ipv4': True,  # VITAL PARA RENDER: Fuerza IPv4 para evitar bloqueos
+        'force_ipv4': True, 
         'socket_timeout': 30,
+        # TRUCO MAESTRO: Fingir ser un iPhone
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios']
+            }
+        }
     }
 
-    # Inyectar cookies si existen y son válidas
-    if os.path.exists(COOKIE_FILE_PATH) and os.path.getsize(COOKIE_FILE_PATH) > 100:
-        base_opts['cookiefile'] = COOKIE_FILE_PATH
-        print("🍪 Usando Cookies para la petición.")
-    else:
-        print("⚠️ ALERTA: Ejecutando SIN cookies (Riesgo de bloqueo).")
+    # NOTA: Hemos quitado las cookies intencionalmente.
+    # El conflicto IP (Venezuela) vs Servidor (USA) causa el bloqueo 429.
+    # El cliente 'ios' suele funcionar bien sin cookies.
 
     # 1. BÚSQUEDA
     ydl_opts_search = {**base_opts, 'format': 'bestaudio/best'}
@@ -212,11 +190,11 @@ def descargar_con_ux(info, tracker, loop):
         logging.error(f"Error descarga: {e}")
         return None
 
-# --- 5. HANDLERS TELEGRAM ---
+# --- 4. HANDLERS TELEGRAM ---
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("👋 <b>Hola Nova</b>\nSoy tu bot de música en la Nube ☁️.\nEnvíame un link de Spotify.", parse_mode=ParseMode.HTML)
+    await message.answer("👋 <b>Hola Nova</b>\nSoy tu bot de música en la Nube ☁️.\nEnvíame un link de Spotify.\n<i>Modo: iOS Stealth</i>", parse_mode=ParseMode.HTML)
 
 @dp.message(F.text.contains("spotify.com"))
 async def handle_spotify(message: types.Message):
@@ -259,9 +237,9 @@ async def handle_spotify(message: types.Message):
                     try: os.remove(f)
                     except: pass
     else:
-        await status_msg.edit_text("❌ Error: Posible bloqueo de YouTube o sin coincidencia.")
+        await status_msg.edit_text("❌ Error: YouTube bloqueó la IP (429). Intenta de nuevo en 5 mins.")
 
-# --- 6. SERVIDOR WEB (HEALTH CHECK) ---
+# --- 5. SERVIDOR WEB (HEALTH CHECK) ---
 
 async def health_check(request):
     return web.Response(text="Bot NovaMusic is Alive! 🎧")
@@ -276,7 +254,7 @@ async def start_web_server():
     await site.start()
 
 async def main():
-    print("🚀 Bot NovaMusic Cloud (Stable V8) Iniciado...")
+    print("🚀 Bot NovaMusic Cloud (iOS Mode) Iniciado...")
     await start_web_server()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
